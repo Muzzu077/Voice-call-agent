@@ -21,6 +21,7 @@ class TaskStatus(str, Enum):
 class ReminderStatus(str, Enum):
     ACTIVE = "active"
     TRIGGERED = "triggered"
+    FIRED = "fired"       # Successfully delivered via outbound call
     CANCELLED = "cancelled"
 
 

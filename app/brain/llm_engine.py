@@ -39,7 +39,11 @@ class LLMEngine:
             response: ChatResponse = await self._client.chat(
                 model=self.model,
                 messages=messages,
-                options={"temperature": 0.7},
+                options={
+                    "temperature": 0.5,      # More focused responses
+                    "num_predict": 150,       # Cap output: voice responses are SHORT
+                    "num_ctx": 2048,          # Smaller context = faster processing
+                },
             )
             return response.message.content
         except Exception as e:

@@ -33,10 +33,11 @@ Thumbs.db
 # Logs
 *.log
 
-# GSD temp
-.gsd/JOURNAL.md
-
-# Models and Weights
+# Models and Binaries
 *.onnx
 *.bin
-*.model
+*.pt
+*.weights
+
+# GSD temp
+.gsd/JOURNAL.md

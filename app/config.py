@@ -1,5 +1,6 @@
 """
 Application configuration — loads from .env file.
+SaaS-grade settings for the AI Voice + Desktop Agent Platform.
 """
 
 import os
@@ -10,32 +11,47 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # ── LLM ──────────────────────────────────────────────
-    OLLAMA_MODEL: str = "llama3.1"
+    # ── Database ─────────────────────────────────
+    DATABASE_URL: str = "postgresql+asyncpg://agent:agent_secret_2026@localhost:5432/voiceagent"
+
+    # ── Auth ─────────────────────────────────────
+    JWT_SECRET_KEY: str = "change-this-to-a-random-secret-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRY_HOURS: int = 24
+
+    # ── LLM ──────────────────────────────────────
+    OLLAMA_MODEL: str = "llama3.2:3b"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
-    # ── Whisper STT (Phase 2) ────────────────────────────
-    WHISPER_MODEL_SIZE: str = "base"
+    # ── ChromaDB ─────────────────────────────────
+    CHROMA_HOST: str = "localhost"
+    CHROMA_PORT: int = 8001
+    # Legacy local path (fallback if CHROMA_HOST not reachable)
+    CHROMA_PERSIST_DIR: str = "./data/chroma"
 
-    # ── TTS (Phase 3) ───────────────────────────────────
+    # ── Whisper STT ──────────────────────────────
+    WHISPER_MODEL_SIZE: str = "base.en"
+
+    # ── TTS ──────────────────────────────────────
     TTS_ENGINE: str = "kokoro"
 
-    # ── Memory ───────────────────────────────────────────
-    CHROMA_PERSIST_DIR: str = "./data/chroma"
-    SQLITE_DB_PATH: str = "./data/voice_agent.db"
-
-    # ── Audio ────────────────────────────────────────────
+    # ── Audio ────────────────────────────────────
     VAD_THRESHOLD: float = 0.5
     AUDIO_SAMPLE_RATE: int = 16000
 
-    # ── Twilio (Phase 4) ────────────────────────────────
+    # ── Twilio ───────────────────────────────────
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_PHONE_NUMBER: str = ""
+    TWILIO_CALLBACK_NUMBER: str = ""
 
-    # ── Server ───────────────────────────────────────────
+    # ── Server ───────────────────────────────────
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    FRONTEND_URL: str = "http://localhost:3000"
+
+    # ── Legacy (kept for backward compat) ────────
+    SQLITE_DB_PATH: str = "./data/voice_agent.db"
 
     class Config:
         env_file = ".env"

@@ -1,14 +1,15 @@
 """
-SQLite structured store — manages tasks, reminders, call logs, and memory logs.
-Uses aiosqlite for async operations.
+PostgreSQL structured store — manages tasks, reminders, call logs, and memory logs.
+Uses SQLAlchemy for async operations and supports multi-tenancy via agent_id.
 """
 
-import aiosqlite
-from datetime import datetime
-from pathlib import Path
 from typing import List, Optional
+from uuid import UUID
+from sqlalchemy.future import select
+from sqlalchemy import desc
 
-from app.config import settings
+from app.db.database import AsyncSessionLocal
+from app.db.models import Agent, Task as DBTask, Reminder as DBReminder, CallLog as DBCallLog, Conversation, ActionLog
 from app.memory.models import (
     Task, TaskCreate, TaskUpdate, TaskStatus,
     Reminder, ReminderCreate, ReminderStatus,
@@ -17,239 +18,252 @@ from app.memory.models import (
 
 
 class StructuredStore:
-    """Async SQLite database manager for structured data."""
+    """Async PostgreSQL database manager for structured data."""
 
-    def __init__(self, db_path: Optional[str] = None):
-        self.db_path = db_path or settings.SQLITE_DB_PATH
-        self._db: Optional[aiosqlite.Connection] = None
+    def __init__(self, agent_id: Optional[UUID] = None):
+        self.agent_id = agent_id
+
+    async def _get_or_create_default_agent(self, session) -> UUID:
+        """Fallback for legacy singleton usage. Creates a default agent if none exists."""
+        if self.agent_id:
+            return self.agent_id
+            
+        stmt = select(Agent).limit(1)
+        result = await session.execute(stmt)
+        agent = result.scalar_one_or_none()
+        
+        if agent:
+            self.agent_id = agent.id
+            return agent.id
+            
+        # For legacy compatibility during migration - normally an error
+        # Assuming a user exists or we create a dummy one?
+        # A proper SaaS flow would require agent_id to be passed in explicitly.
+        raise ValueError("Agent ID must be provided or an agent must exist in DB")
 
     async def init_db(self):
-        """Create database and all tables."""
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
-        self._db.row_factory = aiosqlite.Row
-
-        await self._db.executescript("""
-            CREATE TABLE IF NOT EXISTS memory_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                text TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                session_id TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                deadline TEXT,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS reminders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message TEXT NOT NULL,
-                trigger_time TEXT NOT NULL,
-                condition TEXT,
-                status TEXT NOT NULL DEFAULT 'active',
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS calls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                transcript TEXT,
-                summary TEXT,
-                actions_json TEXT,
-                started_at TEXT NOT NULL,
-                ended_at TEXT
-            );
-        """)
-        await self._db.commit()
+        """No-op as Alembic/main.py migrations handle table creation now."""
+        pass
 
     async def close(self):
-        """Close database connection."""
-        if self._db:
-            await self._db.close()
-            self._db = None
+        """No-op as connection pooling handles this."""
+        pass
 
     # ── Memory Logs ──────────────────────────────────────────
 
-    async def save_memory_log(self, text: str, session_id: Optional[str] = None) -> int:
-        """Save a conversation entry to memory_logs."""
-        now = datetime.utcnow().isoformat()
-        cursor = await self._db.execute(
-            "INSERT INTO memory_logs (text, timestamp, session_id) VALUES (?, ?, ?)",
-            (text, now, session_id),
-        )
-        await self._db.commit()
-        return cursor.lastrowid
+    async def save_memory_log(self, text: str, session_id: Optional[str] = None) -> str:
+        """Save a conversation entry to conversations."""
+        async with AsyncSessionLocal() as session:
+            agent_id = await self._get_or_create_default_agent(session)
+            conv = Conversation(
+                agent_id=agent_id,
+                session_id=session_id,
+                user_message="[System/Note]", 
+                ai_response=text
+            )
+            session.add(conv)
+            await session.commit()
+            return str(conv.id)
 
     async def get_recent_memories(self, limit: int = 10) -> List[MemoryEntry]:
         """Get the most recent memory log entries."""
-        cursor = await self._db.execute(
-            "SELECT * FROM memory_logs ORDER BY id DESC LIMIT ?", (limit,)
-        )
-        rows = await cursor.fetchall()
-        return [
-            MemoryEntry(id=r["id"], text=r["text"], timestamp=r["timestamp"], session_id=r["session_id"])
-            for r in reversed(rows)
-        ]
+        async with AsyncSessionLocal() as session:
+            agent_id = await self._get_or_create_default_agent(session)
+            stmt = select(Conversation).where(Conversation.agent_id == agent_id).order_by(desc(Conversation.created_at)).limit(limit)
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+            return [
+                MemoryEntry(
+                    id=0, # Legacy int ID placeholder
+                    text=f"{r.user_message}: {r.ai_response}",
+                    timestamp=r.created_at.isoformat(),
+                    session_id=r.session_id
+                )
+                for r in reversed(rows)
+            ]
 
     # ── Tasks ────────────────────────────────────────────────
 
     async def create_task(self, data: TaskCreate) -> Task:
-        """Create a new task."""
-        now = datetime.utcnow().isoformat()
-        cursor = await self._db.execute(
-            "INSERT INTO tasks (task, status, deadline, created_at) VALUES (?, ?, ?, ?)",
-            (data.task, TaskStatus.PENDING.value, data.deadline, now),
-        )
-        await self._db.commit()
-        return Task(
-            id=cursor.lastrowid,
-            task=data.task,
-            status=TaskStatus.PENDING,
-            deadline=data.deadline,
-            created_at=now,
-        )
+        async with AsyncSessionLocal() as session:
+            agent_id = await self._get_or_create_default_agent(session)
+            db_task = DBTask(
+                agent_id=agent_id,
+                task=data.task,
+                status=TaskStatus.PENDING.value,
+                deadline=data.deadline
+            )
+            session.add(db_task)
+            await session.commit()
+            await session.refresh(db_task)
+            return Task(
+                id=db_task.id,
+                task=db_task.task,
+                status=TaskStatus(db_task.status),
+                deadline=db_task.deadline,
+                created_at=db_task.created_at.isoformat()
+            )
 
     async def get_tasks(self, status: Optional[TaskStatus] = None) -> List[Task]:
-        """Get all tasks, optionally filtered by status."""
-        if status:
-            cursor = await self._db.execute(
-                "SELECT * FROM tasks WHERE status = ? ORDER BY id DESC", (status.value,)
-            )
-        else:
-            cursor = await self._db.execute("SELECT * FROM tasks ORDER BY id DESC")
-        rows = await cursor.fetchall()
-        return [
-            Task(id=r["id"], task=r["task"], status=r["status"], deadline=r["deadline"], created_at=r["created_at"])
-            for r in rows
-        ]
+        async with AsyncSessionLocal() as session:
+            try:
+                agent_id = await self._get_or_create_default_agent(session)
+            except ValueError:
+                return []
+            stmt = select(DBTask).where(DBTask.agent_id == agent_id)
+            if status:
+                stmt = stmt.where(DBTask.status == status.value)
+            stmt = stmt.order_by(desc(DBTask.id))
+            
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+            return [
+                Task(
+                    id=r.id, task=r.task, status=TaskStatus(r.status),
+                    deadline=r.deadline, created_at=r.created_at.isoformat()
+                )
+                for r in rows
+            ]
 
     async def update_task(self, task_id: int, data: TaskUpdate) -> Optional[Task]:
-        """Update a task's fields."""
-        updates = []
-        values = []
-        if data.status is not None:
-            updates.append("status = ?")
-            values.append(data.status.value)
-        if data.task is not None:
-            updates.append("task = ?")
-            values.append(data.task)
-        if data.deadline is not None:
-            updates.append("deadline = ?")
-            values.append(data.deadline)
-
-        if not updates:
-            return None
-
-        values.append(task_id)
-        await self._db.execute(
-            f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?", values
-        )
-        await self._db.commit()
-
-        cursor = await self._db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        row = await cursor.fetchone()
-        if row:
-            return Task(id=row["id"], task=row["task"], status=row["status"], deadline=row["deadline"], created_at=row["created_at"])
-        return None
+        async with AsyncSessionLocal() as session:
+            stmt = select(DBTask).where(DBTask.id == task_id)
+            result = await session.execute(stmt)
+            db_task = result.scalar_one_or_none()
+            
+            if not db_task:
+                return None
+                
+            if data.status is not None:
+                db_task.status = data.status.value
+            if data.task is not None:
+                db_task.task = data.task
+            if data.deadline is not None:
+                db_task.deadline = data.deadline
+                
+            await session.commit()
+            await session.refresh(db_task)
+            
+            return Task(
+                id=db_task.id, task=db_task.task, status=TaskStatus(db_task.status),
+                deadline=db_task.deadline, created_at=db_task.created_at.isoformat()
+            )
 
     # ── Reminders ────────────────────────────────────────────
 
     async def create_reminder(self, data: ReminderCreate) -> Reminder:
-        """Create a new reminder."""
-        now = datetime.utcnow().isoformat()
-        cursor = await self._db.execute(
-            "INSERT INTO reminders (message, trigger_time, condition, status, created_at) VALUES (?, ?, ?, ?, ?)",
-            (data.message, data.trigger_time, data.condition, ReminderStatus.ACTIVE.value, now),
-        )
-        await self._db.commit()
-        return Reminder(
-            id=cursor.lastrowid,
-            message=data.message,
-            trigger_time=data.trigger_time,
-            condition=data.condition,
-            status=ReminderStatus.ACTIVE,
-            created_at=now,
-        )
+        async with AsyncSessionLocal() as session:
+            agent_id = await self._get_or_create_default_agent(session)
+            db_rem = DBReminder(
+                agent_id=agent_id,
+                message=data.message,
+                trigger_time=data.trigger_time,
+                condition=data.condition,
+                status=ReminderStatus.ACTIVE.value
+            )
+            session.add(db_rem)
+            await session.commit()
+            await session.refresh(db_rem)
+            return Reminder(
+                id=db_rem.id, message=db_rem.message, trigger_time=db_rem.trigger_time,
+                condition=db_rem.condition, status=ReminderStatus(db_rem.status),
+                created_at=db_rem.created_at.isoformat()
+            )
 
     async def get_reminders(self, status: Optional[ReminderStatus] = None) -> List[Reminder]:
-        """Get all reminders, optionally filtered by status."""
-        if status:
-            cursor = await self._db.execute(
-                "SELECT * FROM reminders WHERE status = ? ORDER BY id DESC", (status.value,)
-            )
-        else:
-            cursor = await self._db.execute("SELECT * FROM reminders ORDER BY id DESC")
-        rows = await cursor.fetchall()
-        return [
-            Reminder(
-                id=r["id"], message=r["message"], trigger_time=r["trigger_time"],
-                condition=r["condition"], status=r["status"], created_at=r["created_at"],
-            )
-            for r in rows
-        ]
+        async with AsyncSessionLocal() as session:
+            try:
+                agent_id = await self._get_or_create_default_agent(session)
+            except ValueError:
+                return []
+            stmt = select(DBReminder).where(DBReminder.agent_id == agent_id)
+            if status:
+                stmt = stmt.where(DBReminder.status == status.value)
+            stmt = stmt.order_by(desc(DBReminder.id))
+            
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+            return [
+                Reminder(
+                    id=r.id, message=r.message, trigger_time=r.trigger_time,
+                    condition=r.condition, status=ReminderStatus(r.status),
+                    created_at=r.created_at.isoformat()
+                )
+                for r in rows
+            ]
 
     async def update_reminder_status(self, reminder_id: int, status: ReminderStatus) -> bool:
-        """Update a reminder's status."""
-        cursor = await self._db.execute(
-            "UPDATE reminders SET status = ? WHERE id = ?",
-            (status.value, reminder_id),
-        )
-        await self._db.commit()
-        return cursor.rowcount > 0
+        async with AsyncSessionLocal() as session:
+            stmt = select(DBReminder).where(DBReminder.id == reminder_id)
+            result = await session.execute(stmt)
+            db_rem = result.scalar_one_or_none()
+            
+            if not db_rem:
+                return False
+                
+            db_rem.status = status.value
+            await session.commit()
+            return True
 
     # ── Call Logs ────────────────────────────────────────────
 
     async def create_call_log(self, transcript: str = None, summary: str = None) -> CallLog:
-        """Create a new call log entry."""
-        now = datetime.utcnow().isoformat()
-        cursor = await self._db.execute(
-            "INSERT INTO calls (transcript, summary, started_at) VALUES (?, ?, ?)",
-            (transcript, summary, now),
-        )
-        await self._db.commit()
-        return CallLog(id=cursor.lastrowid, transcript=transcript, summary=summary, started_at=now)
+        async with AsyncSessionLocal() as session:
+            agent_id = await self._get_or_create_default_agent(session)
+            db_call = DBCallLog(agent_id=agent_id, transcript=transcript, summary=summary)
+            session.add(db_call)
+            await session.commit()
+            await session.refresh(db_call)
+            return CallLog(
+                id=db_call.id, transcript=db_call.transcript, summary=db_call.summary,
+                started_at=db_call.started_at.isoformat()
+            )
 
     async def update_call_log(self, call_id: int, transcript: str = None, summary: str = None,
                                actions_json: str = None, ended_at: str = None) -> bool:
-        """Update a call log entry."""
-        updates = []
-        values = []
-        if transcript is not None:
-            updates.append("transcript = ?")
-            values.append(transcript)
-        if summary is not None:
-            updates.append("summary = ?")
-            values.append(summary)
-        if actions_json is not None:
-            updates.append("actions_json = ?")
-            values.append(actions_json)
-        if ended_at is not None:
-            updates.append("ended_at = ?")
-            values.append(ended_at)
-
-        if not updates:
-            return False
-
-        values.append(call_id)
-        cursor = await self._db.execute(
-            f"UPDATE calls SET {', '.join(updates)} WHERE id = ?", values
-        )
-        await self._db.commit()
-        return cursor.rowcount > 0
+        async with AsyncSessionLocal() as session:
+            stmt = select(DBCallLog).where(DBCallLog.id == call_id)
+            result = await session.execute(stmt)
+            db_call = result.scalar_one_or_none()
+            
+            if not db_call:
+                return False
+                
+            if transcript is not None:
+                db_call.transcript = transcript
+            if summary is not None:
+                db_call.summary = summary
+            if actions_json is not None:
+                try:
+                    import json
+                    db_call.actions_json = json.loads(actions_json) if isinstance(actions_json, str) else actions_json
+                except:
+                    pass
+            if ended_at is not None:
+                from datetime import datetime
+                try:
+                    db_call.ended_at = datetime.fromisoformat(ended_at)
+                except:
+                    pass
+                    
+            await session.commit()
+            return True
 
     async def get_call_logs(self, limit: int = 20) -> List[CallLog]:
-        """Get recent call logs."""
-        cursor = await self._db.execute(
-            "SELECT * FROM calls ORDER BY id DESC LIMIT ?", (limit,)
-        )
-        rows = await cursor.fetchall()
-        return [
-            CallLog(
-                id=r["id"], transcript=r["transcript"], summary=r["summary"],
-                actions_json=r["actions_json"], started_at=r["started_at"], ended_at=r["ended_at"],
-            )
-            for r in rows
-        ]
+        async with AsyncSessionLocal() as session:
+            try:
+                agent_id = await self._get_or_create_default_agent(session)
+            except ValueError:
+                return []
+            stmt = select(DBCallLog).where(DBCallLog.agent_id == agent_id).order_by(desc(DBCallLog.id)).limit(limit)
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+            return [
+                CallLog(
+                    id=r.id, transcript=r.transcript, summary=r.summary,
+                    actions_json=str(r.actions_json) if r.actions_json else None,
+                    started_at=r.started_at.isoformat(),
+                    ended_at=r.ended_at.isoformat() if r.ended_at else None
+                )
+                for r in rows
+            ]

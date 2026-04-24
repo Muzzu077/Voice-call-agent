@@ -1,0 +1,70 @@
+# ── AI Voice + Desktop Agent Platform ─────────────────
+# Docker Compose for local development
+# Usage: docker compose up -d
+
+services:
+  # ── PostgreSQL Database ──────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: voiceagent-postgres
+    environment:
+      POSTGRES_DB: voiceagent
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent_secret_2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d voiceagent"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── ChromaDB Vector Store ────────────────────────
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: voiceagent-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=FALSE
+      - IS_PERSISTENT=TRUE
+
+  # ── FastAPI Backend ──────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voiceagent-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override for Docker networking
+      DATABASE_URL: postgresql+asyncpg://agent:agent_secret_2026@postgres:5432/voiceagent
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      # Ollama runs on host machine for best CPU/GPU performance
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    volumes:
+      - ./app:/app/app          # Hot-reload source code
+      - ./data:/app/data        # Persistent data
+    command: >
+      uvicorn app.api.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --log-level info
+
+volumes:
+  postgres_data:
+  chroma_data:

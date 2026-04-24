@@ -27,7 +27,7 @@ class STTEngine:
         self,
         model_size: Optional[str] = None,
         device: str = "auto",
-        language: str = "en",
+        language: str = "en",  # Fixed to English — Hinglish is handled by LLM, not Whisper
     ):
         self.model_size = model_size or settings.WHISPER_MODEL_SIZE
         self.language = language
@@ -94,17 +94,26 @@ class STTEngine:
             segments, info = self._model.transcribe(
                 audio,
                 language=self.language,
-                beam_size=5,
-                vad_filter=False,   # We have our own VAD
+                beam_size=3,        # Reduced from 5 for speed (still accurate)
+                vad_filter=False,
                 condition_on_previous_text=False,
+                no_speech_threshold=0.6,
+                compression_ratio_threshold=2.4,
+                initial_prompt="Voice assistant. User gives short commands in English with Indian accent. Examples: open chrome, set reminder, search youtube, what is the weather.",
             )
 
             # Collect all segments
             text_parts = []
             confidences = []
             for segment in segments:
-                text_parts.append(segment.text.strip())
-                # avg_logprob is negative; convert to 0-1 scale approx
+                text = segment.text.strip()
+                if not text:
+                    continue
+                # Skip segments Whisper itself flagged as no-speech
+                if hasattr(segment, "no_speech_prob") and segment.no_speech_prob > 0.6:
+                    logger.debug(f"Skipping no-speech segment (prob={segment.no_speech_prob:.2f})")
+                    continue
+                text_parts.append(text)
                 if hasattr(segment, "avg_logprob"):
                     conf = min(1.0, max(0.0, 1.0 + segment.avg_logprob / 5.0))
                     confidences.append(conf)

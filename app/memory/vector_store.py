@@ -1,10 +1,12 @@
 """
 ChromaDB Vector Store — semantic memory for conversation recall.
+Supports multi-tenancy via per-agent collections.
 """
 
 import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from uuid import UUID
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -17,42 +19,50 @@ logger = logging.getLogger(__name__)
 class VectorStore:
     """ChromaDB wrapper for semantic conversation memory."""
 
-    COLLECTION_NAME = "conversation_memory"
-
-    def __init__(self, persist_dir: Optional[str] = None):
-        self.persist_dir = persist_dir or settings.CHROMA_PERSIST_DIR
+    def __init__(self, agent_id: Optional[UUID] = None):
+        self.agent_id = agent_id
         self._client: Optional[chromadb.ClientAPI] = None
         self._collection = None
 
+    @property
+    def collection_name(self) -> str:
+        """Get the unique collection name for this agent."""
+        if self.agent_id:
+            # ChromaDB collection names must be valid: contain only chars, numbers, underscores
+            clean_id = str(self.agent_id).replace("-", "_")
+            return f"agent_{clean_id}_memory"
+        return "conversation_memory"  # Legacy single-user fallback
+
     def init(self):
-        """Initialize ChromaDB client and create/load collection."""
+        """Initialize ChromaDB HTTP client and create/load collection."""
         try:
-            self._client = chromadb.PersistentClient(
-                path=self.persist_dir,
-            )
+            # Fallback for local dev if host/port aren't resolving
+            try:
+                self._client = chromadb.HttpClient(
+                    host=settings.CHROMA_HOST,
+                    port=settings.CHROMA_PORT,
+                    settings=ChromaSettings(anonymized_telemetry=False)
+                )
+                # Test connection
+                self._client.heartbeat()
+            except Exception as e:
+                logger.warning(f"Could not connect to ChromaDB via HTTP ({settings.CHROMA_HOST}:{settings.CHROMA_PORT}). Falling back to local PersistentClient: {e}")
+                self._client = chromadb.PersistentClient(
+                    path=settings.CHROMA_PERSIST_DIR,
+                )
+
             self._collection = self._client.get_or_create_collection(
-                name=self.COLLECTION_NAME,
+                name=self.collection_name,
                 metadata={"hnsw:space": "cosine"},
             )
             count = self._collection.count()
-            logger.info(f"ChromaDB initialized. Collection '{self.COLLECTION_NAME}' has {count} entries.")
+            logger.info(f"ChromaDB initialized. Collection '{self.collection_name}' has {count} entries.")
         except Exception as e:
             logger.error(f"ChromaDB initialization failed: {e}")
             raise
 
     def store_memory(self, text: str, metadata: Optional[Dict[str, Any]] = None,
                      doc_id: Optional[str] = None) -> str:
-        """
-        Store a conversation entry in the vector database.
-
-        Args:
-            text: The conversation text to store.
-            metadata: Additional metadata (timestamp, session_id, etc.)
-            doc_id: Optional custom document ID.
-
-        Returns:
-            The document ID used for storage.
-        """
         if self._collection is None:
             raise RuntimeError("VectorStore not initialized. Call init() first.")
 
@@ -77,16 +87,6 @@ class VectorStore:
             raise
 
     def search_similar(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """
-        Search for memories similar to the query.
-
-        Args:
-            query: The text to search for.
-            top_k: Number of results to return.
-
-        Returns:
-            List of dicts with 'text', 'metadata', 'distance' keys.
-        """
         if self._collection is None:
             raise RuntimeError("VectorStore not initialized. Call init() first.")
 
@@ -113,13 +113,11 @@ class VectorStore:
             return []
 
     def get_count(self) -> int:
-        """Get the total number of memories stored."""
         if self._collection is None:
             return 0
         return self._collection.count()
 
     def delete_memory(self, doc_id: str) -> bool:
-        """Delete a specific memory by ID."""
         if self._collection is None:
             return False
         try:
@@ -130,14 +128,13 @@ class VectorStore:
             return False
 
     def clear_all(self):
-        """Delete all memories (use with caution)."""
         if self._client:
             try:
-                self._client.delete_collection(self.COLLECTION_NAME)
+                self._client.delete_collection(self.collection_name)
                 self._collection = self._client.get_or_create_collection(
-                    name=self.COLLECTION_NAME,
+                    name=self.collection_name,
                     metadata={"hnsw:space": "cosine"},
                 )
-                logger.info("All memories cleared.")
+                logger.info(f"All memories cleared for {self.collection_name}.")
             except Exception as e:
                 logger.error(f"Failed to clear memories: {e}")

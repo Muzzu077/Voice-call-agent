@@ -3,11 +3,15 @@ Context Builder — dynamically assembles prompts from memory, history, and pers
 """
 
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from app.brain.personality import Personality
 
 logger = logging.getLogger(__name__)
+
+# IST offset
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 class ContextBuilder:
@@ -19,8 +23,11 @@ class ContextBuilder:
         self._max_short_term = 20  # Max turns to keep in memory
 
     def build_system_prompt(self) -> str:
-        """Build the system prompt with personality + tool instructions."""
-        return self.personality.get_system_prompt()
+        """Build the system prompt with personality + tool instructions + current time."""
+        base = self.personality.get_system_prompt()
+        now_ist = datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
+        return f"{base}\n\n## Current Time (IST — Indian Standard Time)\n{now_ist}\nUse this when computing absolute datetimes for reminders. Always output reminder times in IST format (YYYY-MM-DDTHH:MM:SS)."
+
 
     def build_context(
         self,

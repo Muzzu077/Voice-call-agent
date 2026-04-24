@@ -3,12 +3,14 @@ Agent Service — the orchestrator that ties together LLM, memory, tools, and ac
 This is the HEART of the system.
 """
 
+import asyncio
 import logging
 from typing import Optional, Dict, Any, AsyncGenerator
 
 from app.brain.llm_engine import LLMEngine
 from app.brain.context_builder import ContextBuilder
 from app.brain.tool_parser import ToolParser
+from app.brain.summary_engine import SummaryEngine
 from app.memory.memory_service import MemoryService
 from app.execution.action_dispatcher import ActionDispatcher
 from app.memory.models import ActionResult
@@ -28,11 +30,13 @@ class AgentService:
     7. Return response
     """
 
-    def __init__(self):
+    def __init__(self, agent_id=None):
+        self.agent_id = agent_id
         self.llm = LLMEngine()
         self.context_builder = ContextBuilder()
         self.tool_parser = ToolParser()
-        self.memory = MemoryService()
+        self.summary_engine = SummaryEngine()
+        self.memory = MemoryService(self.agent_id)
         self.dispatcher = ActionDispatcher()
         self._initialized = False
         self._session_id = "default"
@@ -136,6 +140,92 @@ class AgentService:
             "action_result": action_result,
         }
 
+    async def process_message_fast(self, user_message: str) -> Dict[str, Any]:
+        """
+        FAST path for real-time voice calls — optimized for low latency.
+
+        Differences from process_message():
+        - Skips ChromaDB memory recall (saves ~500ms)
+        - Uses only last 6 conversation turns (less context = faster LLM)
+        - For tool calls, returns a hardcoded confirmation (no second LLM call)
+        - Saves to memory in background (non-blocking)
+        """
+        import time
+        if not self._initialized:
+            await self.initialize()
+
+        t0 = time.time()
+        logger.info(f"[FAST] Processing: '{user_message[:80]}'")
+
+        # Build context with minimal history (no memory recall)
+        system_prompt = self.context_builder.build_system_prompt()
+        history = self.context_builder.get_history()
+
+        # Rolling summary compression — keeps context lean
+        history = await self.summary_engine.maybe_compress(history)
+        history = history[-6:]  # Last 6 turns after compression
+
+        # Call LLM
+        t1 = time.time()
+        llm_response = await self.llm.chat(
+            user_message=user_message,
+            system_prompt=system_prompt,
+            history=history,
+        )
+        t2 = time.time()
+        logger.info(f"[FAST] LLM took {t2-t1:.2f}s")
+
+        # Check for tool call
+        action_data = None
+        action_result = None
+        final_response = llm_response
+
+        if self.tool_parser.is_tool_call(llm_response):
+            action_data = self.tool_parser.parse_tool_call(llm_response)
+
+            if action_data:
+                action_name = action_data.get("action", "")
+                logger.info(f"[FAST] Tool call: {action_name}")
+
+                # Execute action
+                t_action = time.time()
+                result: ActionResult = await self.dispatcher.dispatch(action_data)
+                action_latency = int((time.time() - t_action) * 1000)
+                action_result = result.message
+
+                # Log action for observability
+                asyncio.create_task(
+                    self._log_action(
+                        action_name, action_data,
+                        "success" if result.success else "failed",
+                        result.message, action_latency
+                    )
+                )
+
+                # Fast confirmation — no second LLM call
+                if result.success:
+                    final_response = f"Done. {result.message}"
+                else:
+                    final_response = f"Sorry, that didn't work. {result.message}"
+
+        # Save to memory and history
+        self.context_builder.add_turn("user", user_message)
+        self.context_builder.add_turn("assistant", final_response)
+
+        # Background save (non-blocking)
+        asyncio.create_task(
+            self.memory.save_conversation(user_message, final_response, self._session_id)
+        )
+
+        t3 = time.time()
+        logger.info(f"[FAST] Total: {t3-t0:.2f}s | Response: '{final_response[:60]}'")
+
+        return {
+            "response": final_response,
+            "action": action_data,
+            "action_result": action_result,
+        }
+
     async def process_message_stream(self, user_message: str) -> AsyncGenerator[str, None]:
         """
         Process a user message and stream the response.
@@ -201,6 +291,27 @@ class AgentService:
             "session_id": self._session_id,
             "supported_actions": self.dispatcher.get_supported_actions(),
         }
+
+
+    async def _log_action(self, action_type: str, action_data: dict,
+                          status: str, result: str, latency_ms: int):
+        """Log an action to the database for observability."""
+        try:
+            from app.db.database import AsyncSessionLocal
+            from app.db.models import ActionLog
+            async with AsyncSessionLocal() as session:
+                log = ActionLog(
+                    agent_id=self.agent_id,
+                    action_type=action_type,
+                    action_data=action_data,
+                    status=status,
+                    result=result,
+                    latency_ms=latency_ms,
+                )
+                session.add(log)
+                await session.commit()
+        except Exception as e:
+            logger.error(f"Failed to log action: {e}")
 
 
 def _chunk_text(text: str, chunk_size: int = 10) -> list:

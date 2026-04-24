@@ -12,7 +12,8 @@ from app.brain.agent_service import AgentService
 from app.input.audio_pipeline import AudioPipeline
 from app.output.audio_output import AudioOutput
 from app.output.tts_engine import TTSEngine
-from app.api.routes import chat, tasks, reminders, audio, twilio, twilio_ws
+from app.api.routes import chat, tasks, reminders, audio, twilio, twilio_ws, auth, agents, logs
+from app.execution.scheduler import ReminderScheduler
 from app.config import settings
 
 # Configure logging
@@ -28,6 +29,7 @@ agent = AgentService()
 pipeline = AudioPipeline()
 tts = TTSEngine()
 audio_out = AudioOutput(tts)
+scheduler: ReminderScheduler = None  # initialized after agent.initialize()
 
 
 @asynccontextmanager
@@ -39,6 +41,14 @@ async def lifespan(app: FastAPI):
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     settings.ensure_data_dirs()
+    
+    # Initialize DB schema
+    from app.db.database import engine, Base
+    async with engine.begin() as conn:
+        # NOTE: Do NOT use drop_all in production. Using for MVP.
+        # await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+        
     await agent.initialize()
     pipeline.start()
     audio_out.start()
@@ -55,19 +65,32 @@ async def lifespan(app: FastAPI):
     twilio_ws.set_pipeline(pipeline)
     twilio_ws.set_audio_output(audio_out)
 
+    # Start the reminder scheduler — polls DB and calls user for due reminders
+    global scheduler
+    scheduler = ReminderScheduler(
+        structured_store=agent.memory.structured_store,
+        poll_interval_seconds=30,
+    )
+    scheduler.start()
+
     logger.info(f" Agent ready | Model: {settings.OLLAMA_MODEL}")
     logger.info(f" Server: http://{settings.HOST}:{settings.PORT}")
     logger.info(f" Docs:   http://{settings.HOST}:{settings.PORT}/docs")
     logger.info(f" Audio WS: ws://{settings.HOST}:{settings.PORT}/ws/audio")
+    logger.info(f" Reminder scheduler: active (30s poll)")
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     yield
 
     # ── Shutdown ─────────────────────────────────────────
     logger.info("Shutting down...")
+    if scheduler:
+        scheduler.stop()
     pipeline.stop()
     audio_out.stop()
     await agent.shutdown()
+    from app.db.database import engine
+    await engine.dispose()
     logger.info("Agent shut down. Goodbye.")
 
 
@@ -96,6 +119,9 @@ app.include_router(reminders.router)
 app.include_router(audio.router)
 app.include_router(twilio.router)
 app.include_router(twilio_ws.router)
+app.include_router(auth.router)
+app.include_router(agents.router)
+app.include_router(logs.router)
 
 
 @app.get("/", tags=["Health"])

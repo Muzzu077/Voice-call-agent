@@ -79,21 +79,33 @@ async def twilio_stream(websocket: WebSocket):
 
     async def on_transcript(text: str, confidence: float):
         """Fired by AudioPipeline when caller finishes speaking."""
+        import time
         nonlocal play_task
+        
+        t_start = time.time()
+        logger.info(f"📝 Transcript: '{text}' (conf={confidence:.2f})")
+        
+        # Skip empty/junk transcripts
+        if not text or len(text.strip()) < 2:
+            logger.info("Skipping empty/too-short transcript.")
+            return
         
         # Stop any existing AI playback if the user spoke (Barge-in behavior)
         if play_task and not play_task.done():
             play_task.cancel()
             
-        # Optional: Send a "clear" message to Twilio to halt any buffered audio on their end
+        # Clear Twilio's buffered audio
         if stream_sid:
             await websocket.send_text(json.dumps({"event": "clear", "streamSid": stream_sid}))
 
         _pipeline.set_ai_speaking(True)
         try:
-            # Send to LLM
-            result = await _agent.process_message(text)
+            # Use FAST path — skips memory recall, uses minimal context
+            result = await _agent.process_message_fast(text)
             response_text = result["response"]
+            
+            t_llm = time.time()
+            logger.info(f"⏱️ LLM pipeline: {t_llm - t_start:.2f}s")
             
             # Start streaming audio back to caller
             if response_text:

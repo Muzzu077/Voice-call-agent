@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 # ── Action Schemas ───────────────────────────────────────────────
 
+# -- Productivity actions --
+
 class CreateTaskAction(BaseModel):
     action: str  # "create_task"
     task: str
@@ -22,7 +24,7 @@ class CreateTaskAction(BaseModel):
 class CreateReminderAction(BaseModel):
     action: str  # "create_reminder"
     message: str
-    trigger_time: str  # e.g., "18:00" or "2026-04-14T18:00:00"
+    trigger_time: str  # IST datetime, e.g. "2026-04-14T00:30:00"
     condition: Optional[str] = None
 
 class SaveNoteAction(BaseModel):
@@ -34,14 +36,54 @@ class MakeCallAction(BaseModel):
     phone_number: str
     message: Optional[str] = None
 
+# -- Desktop automation actions --
+
+class OpenAppAction(BaseModel):
+    action: str  # "open_app"
+    app: str  # e.g. "chrome", "vscode", "notepad"
+
+class SearchBrowserAction(BaseModel):
+    action: str  # "search_browser"
+    query: str
+
+class OpenUrlAction(BaseModel):
+    action: str  # "open_url"
+    url: str
+
+class OpenFileAction(BaseModel):
+    action: str  # "open_file"
+    path: str
+
+class TypeTextAction(BaseModel):
+    action: str  # "type_text"
+    text: str
+
+class PressKeyAction(BaseModel):
+    action: str  # "press_key"
+    keys: str  # e.g. "ctrl+s", "alt+tab"
+
+class ClickScreenAction(BaseModel):
+    action: str  # "click_screen"
+    x: int
+    y: int
+
 
 # ── Action Registry ─────────────────────────────────────────────
 
 ACTION_SCHEMAS = {
+    # Productivity
     "create_task": CreateTaskAction,
     "create_reminder": CreateReminderAction,
     "save_note": SaveNoteAction,
     "make_call": MakeCallAction,
+    # Desktop automation
+    "open_app": OpenAppAction,
+    "search_browser": SearchBrowserAction,
+    "open_url": OpenUrlAction,
+    "open_file": OpenFileAction,
+    "type_text": TypeTextAction,
+    "press_key": PressKeyAction,
+    "click_screen": ClickScreenAction,
 }
 
 
@@ -105,28 +147,20 @@ class ToolParser:
 
     @staticmethod
     def get_action_schemas_description() -> str:
-        """
-        Generate a description of all supported actions for the system prompt.
-        This tells the LLM what JSON structures it can output.
-        """
-        descriptions = []
-        descriptions.append("You can perform actions by responding with ONLY a JSON object (no other text).")
-        descriptions.append("Supported actions:\n")
+        """Compact action descriptions for the system prompt."""
+        return """ACTIONS (respond with ONE JSON object, no text):
 
-        descriptions.append("""1. Create a task:
-{"action": "create_task", "task": "description of the task", "deadline": "optional deadline"}
+{"action":"create_task","task":"text","deadline":"optional"}
+{"action":"create_reminder","message":"text","trigger_time":"YYYY-MM-DDTHH:MM:SS in IST"}
+{"action":"save_note","content":"text"}
+{"action":"open_app","app":"chrome|vscode|notepad|explorer|terminal|calculator"}
+{"action":"search_browser","query":"search terms"}
+{"action":"open_url","url":"https://..."}
+{"action":"open_file","path":"E:/path/to/file"}
+{"action":"type_text","text":"text to type"}
+{"action":"press_key","keys":"ctrl+s"}
 
-2. Create a reminder:
-{"action": "create_reminder", "message": "reminder message", "trigger_time": "HH:MM or ISO datetime", "condition": "optional condition"}
-
-3. Save a note:
-{"action": "save_note", "content": "note content"}
-
-4. Make a call (future):
-{"action": "make_call", "phone_number": "+1234567890", "message": "optional message"}""")
-
-        descriptions.append("\nIMPORTANT: When performing an action, respond with ONLY the JSON object. Do not include any other text before or after the JSON.")
-        return "\n".join(descriptions)
+REMINDER RULE: trigger_time MUST be absolute IST datetime. Calculate from current time."""
 
     @staticmethod
     def _extract_json_string(text: str) -> Optional[str]:

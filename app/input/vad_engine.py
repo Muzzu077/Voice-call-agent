@@ -38,7 +38,7 @@ class VADEngine:
         self,
         sample_rate: int = None,
         threshold: float = None,
-        silence_duration_ms: int = 600,
+        silence_duration_ms: int = 400,
     ):
         self.sample_rate = sample_rate or settings.AUDIO_SAMPLE_RATE
         self.threshold = threshold or settings.VAD_THRESHOLD

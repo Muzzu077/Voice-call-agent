@@ -1,0 +1,30 @@
+# Dependencies
+venv/
+node_modules/
+frontend/node_modules/
+__pycache__/
+*.pyc
+
+# Data
+data/
+*.db
+
+# Docker
+.git
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Build artifacts
+.next/
+frontend/.next/
+dist/
+build/
+
+# Agent/GSD config
+.agent/
+.agents/
+.gsd/

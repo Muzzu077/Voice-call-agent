@@ -1,8 +1,3 @@
-"""
-Twilio Basic Webhooks.
-Handles standard HTTP callbacks from Twilio for incoming calls.
-"""
-
 import logging
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
@@ -35,6 +30,30 @@ async def handle_incoming_call(request: Request):
 </Response>"""
 
     return Response(content=twiml_response, media_type="text/xml")
+
+
+@router.post("/reminder")
+@router.get("/reminder")
+async def handle_reminder_call(request: Request):
+    """
+    TwiML webhook for agent-initiated reminder calls.
+    Twilio calls the user and speaks the reminder message.
+    Accepts 'message' as a query parameter.
+    """
+    message = request.query_params.get("message", "You have a reminder from your AI assistant.")
+    logger.info(f"Delivering reminder via call: {message}")
+
+    # Speak the message and then hang up gracefully
+    twiml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Pause length="1"/>
+    <Say voice="alice" language="en-IN">{message}</Say>
+    <Pause length="1"/>
+    <Say voice="alice" language="en-IN">This was your reminder from your AI assistant. Goodbye!</Say>
+</Response>"""
+
+    return Response(content=twiml_response, media_type="text/xml")
+
 
 @router.post("/sms")
 async def handle_sms(request: Request):
