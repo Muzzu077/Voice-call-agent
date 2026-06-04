@@ -9,6 +9,7 @@ import TaskList from "../../components/TaskList";
 import CallLogList from "../../components/CallLogList";
 import SipCredentials from "../../components/SipCredentials";
 import LoadingSpinner from "../../components/LoadingSpinner";
+import ScheduleChat from "../../components/ScheduleChat";
 
 export default function DashboardPage() {
   const { user, loading } = useAuth();
@@ -61,7 +62,7 @@ export default function DashboardPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
-          {/* Main Content: Tasks */}
+          {/* Main Content: Tasks and Chat */}
           <main className="lg:col-span-2 space-y-6">
             <section className="glass p-6 shadow-xl">
               <div className="flex items-center gap-3 mb-6">
@@ -74,6 +75,8 @@ export default function DashboardPage() {
               </div>
               <TaskList />
             </section>
+
+            <ScheduleChat />
           </main>
 
           {/* Sidebar */}

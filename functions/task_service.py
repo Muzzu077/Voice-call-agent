@@ -14,7 +14,8 @@ def _build_llm_client():
     """Build an OpenAI-compatible client (OpenRouter or OpenAI)."""
     from openai import OpenAI
 
-    kwargs = {"api_key": os.environ.get("LLM_API_KEY", "")}
+    api_key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY", "")
+    kwargs = {"api_key": api_key}
     
     openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
     if openrouter_api_key:
@@ -52,12 +53,12 @@ def download_recording(recording_url: str) -> str | None:
 
 def transcribe_audio(file_path: str) -> str:
     """Transcribes a local audio file using the OpenAI Whisper API."""
-    if not os.environ.get("LLM_API_KEY"):
+    if not os.environ.get("LLM_API_KEY") and not os.environ.get("OPENROUTER_API_KEY"):
         if os.environ.get("MOCK_MODE") == "true":
             logger.warning("No LLM API key configured. Returning simulated transcription.")
             return "I need to study AI neural networks today at 15:30. And tonight at 20:10 I want to work on my cybersecurity block."
         else:
-            raise ValueError("LLM_API_KEY is not set.")
+            raise ValueError("LLM_API_KEY or OPENROUTER_API_KEY is not set.")
             
     if not file_path:
         raise ValueError("Audio file path is None.")
@@ -87,7 +88,7 @@ def parse_tasks(transcript: str, user_timezone_name: str = "UTC") -> list:
     today_str = local_now.strftime("%Y-%m-%d")
     local_time_str = local_now.strftime("%H:%M:%S")
     
-    if not os.environ.get("LLM_API_KEY"):
+    if not os.environ.get("LLM_API_KEY") and not os.environ.get("OPENROUTER_API_KEY"):
         if os.environ.get("MOCK_MODE") == "true":
             return [
                 {
@@ -96,7 +97,7 @@ def parse_tasks(transcript: str, user_timezone_name: str = "UTC") -> list:
                 }
             ]
         else:
-            raise ValueError("LLM_API_KEY is not set.")
+            raise ValueError("LLM_API_KEY or OPENROUTER_API_KEY is not set.")
             
     try:
         client = _build_llm_client()

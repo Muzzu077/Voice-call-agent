@@ -343,5 +343,97 @@ def scheduler_cron(event: scheduler_fn.ScheduledEvent) -> None:
         except Exception as e:
             logger.error(f"Error processing task reminder for task {task_doc.id}: {e}")
 
-# Trigger functions emulator reload 2
+@https_fn.on_request()
+def parse_text_tasks(req: https_fn.Request) -> https_fn.Response:
+    """API endpoint to parse tasks from raw text sent via frontend chat."""
+    # Handle CORS preflight request
+    if req.method == "OPTIONS":
+        headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Max-Age": "3600"
+        }
+        return https_fn.Response("", status=204, headers=headers)
+
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Content-Type": "application/json"
+    }
+
+    # Verify authorization (Firebase ID Token)
+    auth_header = req.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return https_fn.Response(json.dumps({"error": "Unauthorized: Missing token"}), status=401, headers=headers)
+        
+    id_token = auth_header.split("Bearer ")[1]
+    try:
+        from firebase_admin import auth as admin_auth
+        # Verify token using Admin SDK (handles emulator checks automatically if configured)
+        decoded_token = admin_auth.verify_id_token(id_token)
+        user_id = decoded_token["uid"]
+    except Exception as e:
+        logger.error(f"Failed to verify ID token: {e}")
+        return https_fn.Response(json.dumps({"error": "Unauthorized: Invalid token"}), status=401, headers=headers)
+
+    # Get request body
+    try:
+        data = req.get_json()
+        text = data.get("text", "").strip()
+    except Exception:
+        return https_fn.Response(json.dumps({"error": "Invalid JSON body"}), status=400, headers=headers)
+
+    if not text:
+        return https_fn.Response(json.dumps({"error": "Text prompt cannot be empty"}), status=400, headers=headers)
+
+    # Get user timezone from Firestore
+    user_ref = db.collection("users").document(user_id)
+    user_doc = user_ref.get()
+    user_timezone = "UTC"
+    if user_doc.exists:
+        user_timezone = user_doc.to_dict().get("timezone", "UTC")
+
+    try:
+        extracted_tasks = tasks.parse_tasks(text, user_timezone)
+        
+        # Save tasks to Firestore
+        tasks_ref = user_ref.collection("tasks")
+        saved_tasks = []
+        
+        for item in extracted_tasks:
+            desc = item.get("description", "Unnamed task")
+            iso_dt_str = item.get("iso_datetime")
+            
+            scheduled_time = None
+            if iso_dt_str:
+                try:
+                    dt = datetime.datetime.fromisoformat(iso_dt_str)
+                    user_tz = ZoneInfo(user_timezone)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=user_tz)
+                    scheduled_time = dt.astimezone(ZoneInfo("UTC"))
+                except Exception as e:
+                    logger.warning(f"Could not parse iso_datetime string in text parsing: {iso_dt_str}")
+
+            doc_ref = tasks_ref.add({
+                "description": desc,
+                "scheduled_time": scheduled_time,
+                "is_completed": False,
+                "reminder_sent": False,
+                "created_at": firestore.SERVER_TIMESTAMP
+            })
+            
+            saved_tasks.append({
+                "id": doc_ref[1].id,
+                "description": desc,
+                "scheduled_time": scheduled_time.isoformat() if scheduled_time else None
+            })
+
+        return https_fn.Response(json.dumps({"success": True, "tasks": saved_tasks}), status=200, headers=headers)
+        
+    except Exception as e:
+        logger.error(f"Failed parsing text tasks: {e}")
+        return https_fn.Response(json.dumps({"error": f"Failed to extract tasks: {str(e)}"}), status=500, headers=headers)
+
+# Trigger functions emulator reload 4
 
