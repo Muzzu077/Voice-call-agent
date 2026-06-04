@@ -1,60 +1,85 @@
-# Voice Call AI Agent
+# AI Voice Planner Agent
 
 A real-time, interruptible, memory-aware AI voice agent that talks naturally, handles phone calls, executes actions via tool calling, remembers intelligently, and behaves safely.
 
-## Quick Start
-
-```bash
-# 1. Create virtual environment
-python -m venv venv
-venv\Scripts\activate  # Windows
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Copy environment config
-copy .env.example .env
-
-# 4. Ensure Ollama is running with a model
-ollama pull llama3.1
-
-# 5. Run the server
-python run.py
-```
-
 ## Architecture
 
-See [.gsd/ARCHITECTURE.md](.gsd/ARCHITECTURE.md) for the full system design.
+The system is built on a modern, serverless architecture using Firebase and Next.js:
 
-## API Endpoints
+- **Frontend:** Next.js (React), Tailwind CSS, Firebase Auth
+- **Backend:** Firebase Cloud Functions (Python 3.11), Firebase Admin SDK
+- **Database:** Cloud Firestore (NoSQL Document Database)
+- **Telephony:** Twilio Programmable Voice & SIP
+- **AI/LLM:** OpenAI (GPT-4o, Whisper) or OpenRouter (Llama 3.1)
+- **Hosting:** Firebase Hosting
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | /chat | Send a text message, get AI response |
-| GET | /chat/history | Get recent conversation history |
-| POST | /tasks | Create a task |
-| GET | /tasks | List all tasks |
-| POST | /reminders | Create a reminder |
-| GET | /reminders | List all reminders |
+See [ARCHITECTURE.md](.gsd/ARCHITECTURE.md) for the full system design.
 
-## Tech Stack
+## Prerequisites
 
-- **LLM:** Ollama (Llama 3.1 / Qwen 3)
-- **STT:** Faster-Whisper
-- **TTS:** Kokoro TTS / Piper TTS
-- **VAD:** Silero VAD
-- **Vector DB:** ChromaDB
-- **Structured DB:** SQLite
-- **API:** FastAPI + WebSockets
-- **Telephony:** Twilio
+- [Node.js](https://nodejs.org/) (v18+)
+- [Python](https://www.python.org/) (3.11+)
+- [Firebase CLI](https://firebase.google.com/docs/cli) (`npm install -g firebase-tools`)
+- A Firebase Project
+- A Twilio Account
 
-## Development Phases
+## Quick Start (Local Development)
 
-1. ✅ Foundation — LLM + Memory + Tool Calling
-2. ⬜ Audio Pipeline — VAD + Streaming STT
-3. ⬜ Voice Output — TTS + Real-Time Loop
-4. ⬜ Telephony — Twilio Integration
-5. ⬜ Intelligence — Summarization + Validation
+### 1. Environment Setup
+
+Copy the example environment variables and fill them in:
+
+```bash
+cp .env.example frontend/.env.local
+cp .env.example functions/.env
+```
+
+*Note: For local emulation, Firebase automatically uses mock credentials, but you will still need valid API keys for LLM and Twilio services.*
+
+### 2. Frontend Setup
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The Next.js app will be running at `http://localhost:3001`.
+
+### 3. Backend Setup
+
+```bash
+cd functions
+python3.11 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### 4. Firebase Emulators
+
+In the root directory, start the Firebase Emulator Suite:
+
+```bash
+firebase emulators:start --project demo-project
+```
+
+This will spin up local versions of:
+- Authentication (`localhost:9099`)
+- Firestore (`localhost:8080`)
+- Cloud Functions (`localhost:5001`)
+- Pub/Sub (`localhost:8085`)
+- Hosting (`localhost:5000`)
+- Emulator UI (`localhost:4000`)
+
+## Deployment
+
+To deploy to production (Firebase):
+
+```bash
+firebase deploy --only functions,firestore,hosting
+```
+
+The `predeploy` hooks will automatically build the Next.js frontend before deploying it to Firebase Hosting.
 
 ## License
 

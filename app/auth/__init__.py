@@ -1,3 +1,0 @@
-"""
-Authentication and Authorization module.
-"""

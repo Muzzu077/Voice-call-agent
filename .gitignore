@@ -32,12 +32,31 @@ Thumbs.db
 
 # Logs
 *.log
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+pubsub-debug.log
+ui-debug.log
 
 # Models and Binaries
 *.onnx
 *.bin
 *.pt
 *.weights
+
+# Environment
+.env
+functions/.env
+frontend/.env.local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build
+frontend/out/
+frontend/.next/
+.firebase/
 
 # GSD temp
 .gsd/JOURNAL.md

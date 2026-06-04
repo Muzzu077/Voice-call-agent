@@ -1,164 +1,102 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { listAgents } from "@/lib/api";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { auth } from "../../lib/firebase";
+import { signOut } from "firebase/auth";
+import { useAuth } from "../../contexts/AuthContext";
+import TaskList from "../../components/TaskList";
+import CallLogList from "../../components/CallLogList";
+import SipCredentials from "../../components/SipCredentials";
+import LoadingSpinner from "../../components/LoadingSpinner";
 
-export default function DashboardOverview() {
-  const [agents, setAgents] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function DashboardPage() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
 
   useEffect(() => {
-    listAgents()
-      .then(setAgents)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+    if (!loading && !user) {
+      router.push("/login");
+    }
+  }, [user, loading, router]);
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      router.push("/login");
+    } catch (error) {
+      console.error("Failed to log out", error);
+    }
+  };
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
 
   return (
-    <div>
-      <h1 style={{ fontSize: "1.8rem", fontWeight: 800, marginBottom: "8px" }}>
-        Dashboard
-      </h1>
-      <p style={{ color: "var(--text-secondary)", marginBottom: "32px" }}>
-        Overview of your AI voice agents and platform activity.
-      </p>
-
-      {/* ── Stats ────────────────────────── */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: "16px",
-          marginBottom: "40px",
-        }}
-      >
-        <div className="stat-card">
-          <div className="stat-value gradient-text">{agents.length}</div>
-          <div className="stat-label">Active Agents</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value" style={{ color: "var(--success)" }}>
-            —
+    <div className="min-h-screen animated-gradient text-gray-100 p-4 sm:p-8 font-sans">
+      <div className="max-w-7xl mx-auto space-y-8">
+        
+        {/* Header */}
+        <header className="flex flex-col sm:flex-row justify-between items-center glass p-6 shadow-xl">
+          <div className="mb-4 sm:mb-0">
+            <h1 className="text-3xl font-extrabold gradient-text">
+              Voice Call Dashboard
+            </h1>
+            <p className="text-gray-400 mt-1 font-medium">
+              Welcome back, <span className="text-gray-200">{user.email}</span>
+            </p>
           </div>
-          <div className="stat-label">Calls Today</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value" style={{ color: "var(--warning)" }}>
-            —
-          </div>
-          <div className="stat-label">Actions Executed</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value" style={{ color: "#06b6d4" }}>
-            —
-          </div>
-          <div className="stat-label">Avg Latency</div>
-        </div>
-      </div>
-
-      {/* ── Agent List ───────────────────── */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: "20px",
-        }}
-      >
-        <h2 style={{ fontSize: "1.2rem", fontWeight: 700 }}>Your Agents</h2>
-        <Link href="/dashboard/agents/new">
-          <button className="btn-glow" style={{ padding: "8px 20px", fontSize: "0.85rem" }}>
-            + New Agent
+          <button
+            onClick={handleLogout}
+            className="btn-outline"
+          >
+            Sign Out
           </button>
-        </Link>
-      </div>
+        </header>
 
-      {loading ? (
-        <p style={{ color: "var(--text-muted)" }}>Loading agents...</p>
-      ) : agents.length === 0 ? (
-        <div
-          className="glass"
-          style={{
-            padding: "48px",
-            textAlign: "center",
-          }}
-        >
-          <p style={{ fontSize: "2rem", marginBottom: "12px" }}>🤖</p>
-          <p style={{ color: "var(--text-secondary)", marginBottom: "20px" }}>
-            No agents yet. Create your first AI voice agent!
-          </p>
-          <Link href="/dashboard/agents/new">
-            <button className="btn-glow">Create Agent</button>
-          </Link>
-        </div>
-      ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-            gap: "16px",
-          }}
-        >
-          {agents.map((agent: any) => (
-            <Link
-              key={agent.id}
-              href={`/dashboard/agents/${agent.id}`}
-              style={{ textDecoration: "none", color: "inherit" }}
-            >
-              <div
-                className="glass glass-hover"
-                style={{
-                  padding: "24px",
-                  cursor: "pointer",
-                  transition: "all 0.3s ease",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: "12px",
-                  }}
-                >
-                  <h3 style={{ fontSize: "1.1rem", fontWeight: 700 }}>
-                    {agent.name}
-                  </h3>
-                  <span className={`badge ${agent.is_active ? "badge-success" : "badge-error"}`}>
-                    {agent.is_active ? "Active" : "Inactive"}
-                  </span>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          
+          {/* Main Content: Tasks */}
+          <main className="lg:col-span-2 space-y-6">
+            <section className="glass p-6 shadow-xl">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="bg-indigo-900/50 border border-indigo-500/30 p-2 rounded-lg text-indigo-400">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                  </svg>
                 </div>
-                <p
-                  style={{
-                    color: "var(--text-secondary)",
-                    fontSize: "0.85rem",
-                    marginBottom: "12px",
-                    display: "-webkit-box",
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: "vertical",
-                    overflow: "hidden",
-                  }}
-                >
-                  {agent.personality || "Default personality"}
-                </p>
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                  {(agent.tools_enabled || []).slice(0, 3).map((tool: string) => (
-                    <span key={tool} className="badge badge-info">
-                      {tool}
-                    </span>
-                  ))}
-                  {(agent.tools_enabled || []).length > 3 && (
-                    <span className="badge badge-info">
-                      +{agent.tools_enabled.length - 3}
-                    </span>
-                  )}
-                </div>
+                <h2 className="text-2xl font-bold text-gray-100">Today&apos;s Tasks</h2>
               </div>
-            </Link>
-          ))}
+              <TaskList />
+            </section>
+          </main>
+
+          {/* Sidebar */}
+          <aside className="space-y-8">
+            <section className="glass-hover">
+              <SipCredentials />
+            </section>
+
+            <section className="glass p-6 shadow-xl glass-hover">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="bg-purple-900/50 border border-purple-500/30 p-2 rounded-lg text-purple-400">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-bold text-gray-100">Call Logs</h2>
+              </div>
+              <CallLogList />
+            </section>
+          </aside>
+          
         </div>
-      )}
+      </div>
     </div>
   );
 }
