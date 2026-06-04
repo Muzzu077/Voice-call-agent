@@ -18,9 +18,27 @@ from twilio_utils import validate_twilio_request
 
 # Initialize Firebase Admin
 if os.environ.get("FUNCTIONS_EMULATOR") == "true":
-    import google.auth.credentials
-    cred = google.auth.credentials.AnonymousCredentials()
+    from firebase_admin import credentials
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives import serialization
+    
     project_id = os.environ.get("GCLOUD_PROJECT") or os.environ.get("FIREBASE_PROJECT_ID") or "demo-project"
+    
+    # Generate a dummy RSA key to bypass Google ADC metadata server timeout in emulator
+    pk = rsa.generate_private_key(65537, 2048).private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()
+    ).decode('utf-8')
+    
+    cred = credentials.Certificate({
+        'type': 'service_account',
+        'project_id': project_id,
+        'private_key_id': 'dummy-key-id',
+        'private_key': pk,
+        'client_email': 'dummy@example.com',
+        'token_uri': 'https://oauth2.googleapis.com/token'
+    })
     initialize_app(cred, {'projectId': project_id})
 else:
     initialize_app()
@@ -324,3 +342,6 @@ def scheduler_cron(event: scheduler_fn.ScheduledEvent) -> None:
                     })
         except Exception as e:
             logger.error(f"Error processing task reminder for task {task_doc.id}: {e}")
+
+# Trigger functions emulator reload 2
+
